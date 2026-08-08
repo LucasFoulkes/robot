@@ -4,7 +4,7 @@ joy_axis_mapper:
     deadman_button: 9
     deadzone: 0.0
     invert: false
-    scale: 1.0
+    scale: 0.6
     output_topic: "/actuators/steering/command"
 
 pico_ackermann_driver:
