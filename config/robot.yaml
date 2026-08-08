@@ -1,0 +1,17 @@
+joy_axis_mapper:
+  ros__parameters:
+    axis: 0
+    deadman_button: 9
+    deadzone: 0.0
+    invert: false
+    scale: 1.0
+    output_topic: "/actuators/steering/command"
+
+pico_ackermann_driver:
+  ros__parameters:
+    channels: ["steering"]
+    port: "/dev/pico-ackermann"
+    baud: 115200
+    command_limit: 1.0
+    send_hz: 50.0
+    input_timeout: 0.25
