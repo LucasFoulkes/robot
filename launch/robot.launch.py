@@ -2,7 +2,7 @@
 # Use of this source code is governed by an MIT-style license that can be found
 # in the LICENSE file or at https://opensource.org/licenses/MIT.
 
-"""Launch controller input, steering teleop, and the Pico driver."""
+"""Launch controller input, actuator teleop, and the Pico driver."""
 
 import os
 
@@ -47,6 +47,13 @@ def generate_launch_description():
             package='dualshock4_teleop',
             executable='joy_axis_mapper',
             name='joy_axis_mapper',
+            output='screen',
+            parameters=[config],
+        ),
+        Node(
+            package='dualshock4_teleop',
+            executable='joy_axis_mapper',
+            name='joy_axis_mapper_throttle',
             output='screen',
             parameters=[config],
         ),

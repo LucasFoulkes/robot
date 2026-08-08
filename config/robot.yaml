@@ -7,9 +7,18 @@ joy_axis_mapper:
     scale: 0.6
     output_topic: "/actuators/steering/command"
 
+joy_axis_mapper_throttle:
+  ros__parameters:
+    axis: 3
+    deadman_button: 9
+    deadzone: 0.0
+    invert: true
+    scale: 0.1
+    output_topic: "/actuators/throttle/command"
+
 pico_ackermann_driver:
   ros__parameters:
-    channels: ["steering"]
+    channels: ["steering", "throttle"]
     port: "/dev/pico-ackermann"
     baud: 115200
     command_limit: 1.0

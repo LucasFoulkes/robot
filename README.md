@@ -7,7 +7,7 @@ reusing the hardware- and controller-specific packages.
 ## Included packages
 
 - `dualshock4_bringup`: Bluetooth connection and `/joy` publication
-- `dualshock4_teleop`: joystick axis to normalized steering command
+- `dualshock4_teleop`: joystick axes to normalized steering/throttle commands
 - `pico_ackermann_driver`: USB serial transport and Pico actuator watchdog
 
 ## Build
@@ -24,6 +24,12 @@ source install/setup.bash
 ros2 launch robot robot.launch.py
 ```
 
-The operational configuration keeps L1 as the steering deadman and keeps the
-Pico driver at its normal `[-1.0, 1.0]` command limit. Unloaded servo
-calibration remains a deliberate manual procedure outside this launch file.
+The operational configuration uses L1 as the deadman for both steering and
+throttle. Steering uses the left stick horizontal axis at scale `0.6`.
+Throttle uses the right stick vertical axis at scale `0.1`; SDL reports up as
+negative, so that mapper is inverted to make stick-forward positive. Verify
+the live axis and sign before connecting the motor battery.
+
+The Pico driver stays at its normal `[-1.0, 1.0]` command limit. Unloaded
+servo calibration remains a deliberate manual procedure outside this launch
+file.
