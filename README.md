@@ -26,7 +26,7 @@ ros2 launch robot robot.launch.py
 
 The operational configuration uses L1 as the deadman for both steering and
 throttle. Steering uses the left stick horizontal axis at scale `0.6`.
-Throttle uses the right stick vertical axis at scale `0.4`; SDL reports up as
+Throttle uses the right stick vertical axis at scale `0.3`; SDL reports up as
 negative, so that mapper is inverted to make stick-forward positive. Verify
 the live axis and sign before connecting the motor battery.
 

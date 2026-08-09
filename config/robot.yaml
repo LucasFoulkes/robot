@@ -13,7 +13,7 @@ joy_axis_mapper_throttle:
     deadman_button: 9
     deadzone: 0.0
     invert: true
-    scale: 0.4
+    scale: 0.3
     output_topic: "/actuators/throttle/command"
 
 pico_ackermann_driver:
