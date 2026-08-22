@@ -1,0 +1,284 @@
+# Nav2 for the Ackermann robot, navigating in the ``odom`` frame.
+#
+# There is no map and no localization: MOLA publishes odom -> base_link and
+# that is the whole TF story. Every Nav2 global frame is therefore ``odom``,
+# both costmaps roll with the robot, and no static layer or AMCL is loaded.
+#
+# Consequence to know: goals are only reachable inside the rolling global
+# costmap window (see global_costmap width/height below). A "2D Goal Pose"
+# dropped further away than half that window has no costmap to plan through
+# and ComputePathToPose will fail. Enlarge the window or drive closer.
+#
+# Reverse is enabled end to end: Reeds-Shepp search in the planner,
+# allow_reversing in the controller, negative min_velocity in the smoother.
+# The planner is the only component with a vehicle model; the behavior trees
+# plan once per goal so its cusps are real ones, not replanning artifacts.
+
+bt_navigator:
+  ros__parameters:
+    global_frame: odom
+    robot_base_frame: base_link
+    odom_topic: /lidar_odometry/pose
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    # These two are REWRITTEN by the launch file to the Ackermann trees in
+    # behavior_trees/. They must exist here as keys: nav2_common's
+    # RewrittenYaml only substitutes parameters the source file already
+    # declares, so omitting them silently leaves Nav2 on its own default tree
+    # -- which calls Spin, which this robot has no behavior server for.
+    default_nav_to_pose_bt_xml: ""
+    default_nav_through_poses_bt_xml: ""
+    navigators: ["navigate_to_pose", "navigate_through_poses"]
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+    navigate_through_poses:
+      plugin: "nav2_bt_navigator::NavigateThroughPosesNavigator"
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    # Nav2 can emit TwistStamped; the adaptive controller subscribes to plain
+    # Twist by default. Keep these two in sync if you change it.
+    enable_stamped_cmd_vel: false
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.5
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.3
+    odom_topic: /lidar_odometry/pose
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.25
+      movement_time_allowance: 15.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.20
+      # Smac paths end in the goal pose, so the follower arrives aligned and
+      # the tolerance can be honest. (With NavFn it had to be 0.60: paths
+      # ended in whatever direction they arrived, and a car cannot trim its
+      # heading in place, so anything tighter became an endless shuffle.)
+      yaw_goal_tolerance: 0.25
+      stateful: true
+
+    # Regulated Pure Pursuit rather than MPPI: this runs on a Raspberry Pi,
+    # and RPP costs a fraction of the CPU. The kinematic feasibility comes
+    # from the Reeds-Shepp planner upstream; RPP just tracks the path it is
+    # handed, and the adaptive controller clamps steering to what the vehicle
+    # can actually do.
+    FollowPath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      # NOT lower = safer, on this vehicle: below ~0.3 m/s the commanded
+      # speed sits inside the stall-attraction zone (stiction + loop lag)
+      # and cruise degenerates into stick-slip stepping. Verified in sim at
+      # measured odometry noise: 0.22 cycles, 0.32 is clean.
+      desired_linear_vel: 0.32
+      lookahead_dist: 0.60
+      # Longer lookahead = gentler curvature demand. At 0.25 m RPP asked a
+      # median w/v of 2.9 against a car that can do ~1.3: permanent lock.
+      min_lookahead_dist: 0.40
+      max_lookahead_dist: 1.00
+      lookahead_time: 2.0
+      use_velocity_scaled_lookahead_dist: true
+      transform_tolerance: 0.2
+      # Approach and regulated speeds both sit at what the car can actually
+      # launch into. At 0.15 the controller's feedforward was 0.045 and the
+      # integrator needed 5-8 s to reach breakaway: a third of the flight log
+      # was "stalled", and every stalled row carried cmd_v = 0.15. Same
+      # reasoning as desired_linear_vel above: lower is NOT safer here.
+      min_approach_linear_velocity: 0.25
+      approach_velocity_scaling_dist: 0.5
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.5
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      # Also learned: the controller gets the same radius pushed to it.
+      # Only slow for genuinely tight arcs (below ~the car's own limit);
+      # at 1.40 nearly every arc was "tight" and RPP crawled at 0.15 m/s.
+      regulated_linear_scaling_min_radius: 0.60
+      regulated_linear_scaling_min_speed: 0.25
+      use_fixed_curvature_lookahead: false
+      curvature_lookahead_dist: 0.4
+      # Mandatory pairing: RPP rejects the parameter set outright if
+      # use_rotate_to_heading and allow_reversing are both true.
+      use_rotate_to_heading: false
+      allow_reversing: true
+      max_robot_pose_search_dist: 5.0
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 4
+      height: 4
+      resolution: 0.05
+      # Measured from the URDF: rear body edge to front body edge, and the
+      # outer face of the tyres (track_width/2 + wheel_width/2).
+      footprint: "[[-0.06, -0.155], [0.35, -0.155], [0.35, 0.155], [-0.06, 0.155]]"
+      track_unknown_space: false
+      # Pure odom point-to-point by choice: no obstacle layer, so NOTHING is
+      # treated as an obstacle and the robot will drive into whatever is in
+      # the way. The operator is the safety system. The lone inflation layer
+      # is inert (nothing to inflate) -- it exists because an empty plugins
+      # list is not a valid ROS 2 parameter and crashes the costmap.
+      plugins: ["inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Nothing to inflate, but Smac Hybrid uses the inflation radius to
+        # decide whether it may skip full-footprint collision checks: below
+        # the circumscribed radius (0.40 m) it checks the whole footprint at
+        # every node and logs an error on every plan.
+        inflation_radius: 0.45
+      always_send_full_costmap: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      global_frame: odom
+      robot_base_frame: base_link
+      # Rolling, because there is no map to anchor a fixed grid to. This is
+      # the window that bounds how far away a goal can usefully be.
+      rolling_window: true
+      width: 24
+      height: 24
+      resolution: 0.05
+      footprint: "[[-0.06, -0.155], [0.35, -0.155], [0.35, 0.155], [-0.06, 0.155]]"
+      # Unseen cells count as free, so the planner will happily route into
+      # space the LiDAR has not observed yet and replan when it does.
+      track_unknown_space: false
+      # Pure odom point-to-point by choice: no obstacle layer, so NOTHING is
+      # treated as an obstacle and the robot will drive into whatever is in
+      # the way. The operator is the safety system. The lone inflation layer
+      # is inert (nothing to inflate) -- it exists because an empty plugins
+      # list is not a valid ROS 2 parameter and crashes the costmap.
+      plugins: ["inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # Nothing to inflate, but Smac Hybrid uses the inflation radius to
+        # decide whether it may skip full-footprint collision checks: below
+        # the circumscribed radius (0.40 m) it checks the whole footprint at
+        # every node and logs an error on every plan.
+        inflation_radius: 0.45
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0
+    planner_plugins: ["GridBased"]
+    # Smac Hybrid-A* with Reeds-Shepp: the only planner here that knows the
+    # car has a turning radius and a heading. Paths are drivable arcs and
+    # END IN THE GOAL POSE, which is what makes a tight yaw tolerance
+    # meaningful. (NavFn was used for a while: holonomic grid Dijkstra, no
+    # vehicle model at all -- its paths left the robot sideways, had corners
+    # and ended in whatever direction they arrived.)
+    #
+    # The earlier trouble with Smac -- a one-cell REVERSE primitive at the
+    # start of many paths, regenerated on every 1 Hz replan, 24 reversals in
+    # 211 s -- was a replanning problem, not a planner problem: each replan
+    # re-anchored the path at the robot and put a fresh cusp under it. The
+    # behavior trees now plan ONCE per goal (GoalUpdatedController) and only
+    # replan when following fails, which with no obstacle layer is the only
+    # time a new path can say anything new.
+    GridBased:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      tolerance: 0.30
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: true
+      max_iterations: 200000
+      max_on_approach_iterations: 1000
+      max_planning_time: 4.0
+      # REEDS_SHEPP is what buys reverse. DUBIN is forward-only and would make
+      # every tight goal unreachable for a car with this turning radius.
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 64
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 2.0
+      # Measured from the flight log: the car achieves curvature ~1.48/m at
+      # lock (radius ~0.67 m). Margin over the measurement, not 2x over it:
+      # at 1.40 the planner believed the car could barely turn and every
+      # laterally-offset goal became a forward-back-forward shuffle.
+      # ackermann_adaptive_controller can push its learned value here live
+      # (publish_turning_radius in robot.yaml; currently off).
+      minimum_turning_radius: 0.75
+      # Reverse must cost enough that a forward arc wins whenever one exists
+      # (with no obstacles one always does); at 2.0 the planner shuffled
+      # freely, 5.0 still produced reverse-first starts. Each direction
+      # change is a full stop on a real car, so that is charged too.
+      reverse_penalty: 8.0
+      change_penalty: 1.0
+      non_straight_penalty: 1.20
+      cost_penalty: 2.0
+      retrospective_penalty: 0.015
+      # Heuristic lookup window. It is regenerated every time
+      # minimum_turning_radius changes -- which the adaptive controller does
+      # live as it learns the envelope -- and that rebuild stalls the next
+      # plan: 15 s at 10 m on this Pi, ~14 s at 20 m. 6 m is plenty with
+      # nothing to plan around.
+      lookup_table_size: 6.0
+      cache_obstacle_heuristic: false
+      # Smac smooths its own output (cusp-aware), so no SmoothPath in the BT.
+      smooth_path: true
+      allow_primitive_interpolation: false
+      use_quadratic_cost_penalty: false
+
+# NOT LAUNCHED. Smac smooths its own paths; this block is kept so a
+# SmoothPath node can be dropped back into the trees without retuning.
+smoother_server:
+  ros__parameters:
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 1.0e-10
+      max_its: 1000
+      do_refinement: true
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    # Spin is deliberately absent: this vehicle cannot rotate in place.
+    behavior_plugins: ["backup", "drive_on_heading", "wait"]
+    backup:
+      plugin: "nav2_behaviors::BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors::DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors::Wait"
+    local_frame: odom
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.1
+    simulate_ahead_time: 2.0
+    enable_stamped_cmd_vel: false
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    # Negative x is what lets a smoothed command express reverse at all.
+    # Angular capped so w/v stays near the car's curvature limit (~1.3/m
+    # at 0.32 m/s); 0.90 let Nav2 demand twice the turn the car has.
+    max_velocity: [0.38, 0.0, 0.45]
+    min_velocity: [-0.30, 0.0, -0.45]
+    max_accel: [1.0, 0.0, 2.5]
+    max_decel: [-1.5, 0.0, -2.5]
+    odom_topic: "/lidar_odometry/pose"
+    odom_duration: 0.1
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+    enable_stamped_cmd_vel: false

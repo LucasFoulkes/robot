@@ -1,3 +1,9 @@
+# Robot-wide configuration.
+#
+# The DualShock mappers and the adaptive controller both write the actuator
+# topics, so exactly one of them may run at a time. robot.launch.py starts the
+# adaptive controller; teleop.launch.py starts the mappers. Never both.
+
 joy_axis_mapper:
   ros__parameters:
     axis: 0
@@ -24,3 +30,53 @@ pico_ackermann_driver:
     command_limit: 1.0
     send_hz: 50.0
     input_timeout: 0.25
+
+ackermann_adaptive_controller:
+  ros__parameters:
+    # Integration only. Tuning (gains, gates, delays, slew limits, envelope
+    # evidence thresholds, launch floor...) lives in Policy in the package's
+    # core.py with the rationale next to each value; the node derives its
+    # parameter defaults from there. Add a tuning key here ONLY when this
+    # robot needs a value different from the default -- the previous copy of
+    # all 33 of them was identical to the defaults and drifted once.
+
+    # MOLA publishes on /lidar_odometry/pose, NOT /odometry. Verified on
+    # hardware: 10 Hz, odom -> base_link, twist field all zeros, which is why
+    # velocity is differenced from pose rather than read from the message.
+    odom_topic: "/lidar_odometry/pose"
+    cmd_vel_topic: "/cmd_vel"
+    use_stamped_cmd_vel: false
+    cmd_vel_timeout: 0.5
+    # No joystick is launched, so there is no hardware e-stop. -1 disables
+    # the /joy subscription entirely. The stop is ~/set_active false.
+    estop_joy_topic: "/joy"
+    estop_button: -1
+    # Arming at launch is safe on its own: Nav2 emits no cmd_vel until a goal
+    # is accepted. robot.launch.py exposes start_active:=false, which
+    # rewrites this key through RewrittenYaml (verified: it lands as a bool
+    # alongside odom_topic; an inline dict override would not).
+    start_active: true
+
+    # -- learned steering envelope -> Nav2 -----------------------------------
+    # ON, planner only. Smac regenerates its motion primitives live when
+    # minimum_turning_radius changes, so the car's measured lock becomes the
+    # planner's lock. Nothing is pushed until the envelope is CONFIRMED
+    # (env_evidence near-lock samples each way); before that the planner
+    # keeps the hand-set value in nav2_params.yaml. Watch /diagnostics:
+    # envelope, min_turning_radius, radius_pushed_to_nav2.
+    #
+    # The controller half is deliberately disabled (empty server name): RPP
+    # has no curvature limit, only a slow-down threshold
+    # (regulated_linear_scaling_min_radius), and pushing a radius into that
+    # once made the follower crawl at its minimum speed on nearly every arc.
+    # The car is protected from over-tight paths by the node's own
+    # curvature clamp instead.
+    publish_turning_radius: true
+    planner_server: "/planner_server"
+    planner_radius_param: "GridBased.minimum_turning_radius"
+    controller_server: ""
+    controller_radius_param: "FollowPath.regulated_linear_scaling_min_radius"
+    radius_rel_change: 0.10  # hysteresis: Smac rebuilds primitives on each push
+    radius_abs_change: 0.05
+    radius_push_period: 5.0
+    save_period: 30.0

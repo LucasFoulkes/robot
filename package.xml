@@ -11,6 +11,7 @@
 
   <exec_depend>dualshock4_bringup</exec_depend>
   <exec_depend>dualshock4_teleop</exec_depend>
+  <exec_depend>rplidar_ros</exec_depend>
   <exec_depend>mola_bridge_ros2</exec_depend>
   <exec_depend>mola_lidar_odometry</exec_depend>
   <exec_depend>pico_ackermann_driver</exec_depend>
@@ -18,6 +19,10 @@
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>xacro</exec_depend>
+
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>ackermann_adaptive_controller</exec_depend>
 
   <export>
     <build_type>ament_python</build_type>
